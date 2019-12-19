@@ -39,38 +39,46 @@ func (r *Row) WriteSlice(e interface{}, cols int) int {
 		case time.Time:
 			cell := r.AddCell()
 			cell.SetValue(t)
+			cell.Write()
 		case fmt.Stringer: // check Stringer first
 			cell := r.AddCell()
 			cell.SetString(t.String())
+			cell.Write()
 		case sql.NullString: // check null sql types nulls = ''
 			cell := r.AddCell()
 			if cell.SetString(``); t.Valid {
 				cell.SetValue(t.String)
 			}
+			cell.Write()
 		case sql.NullBool:
 			cell := r.AddCell()
 			if cell.SetString(``); t.Valid {
 				cell.SetBool(t.Bool)
 			}
+			cell.Write()
 		case sql.NullInt64:
 			cell := r.AddCell()
 			if cell.SetString(``); t.Valid {
 				cell.SetValue(t.Int64)
 			}
+			cell.Write()
 		case sql.NullFloat64:
 			cell := r.AddCell()
 			if cell.SetString(``); t.Valid {
 				cell.SetValue(t.Float64)
 			}
+			cell.Write()
 		default:
 			switch val.Kind() { // underlying type of slice
 			case reflect.String, reflect.Int, reflect.Int8,
 				reflect.Int16, reflect.Int32, reflect.Int64, reflect.Float64, reflect.Float32:
 				cell := r.AddCell()
 				cell.SetValue(val.Interface())
+				cell.Write()
 			case reflect.Bool:
 				cell := r.AddCell()
 				cell.SetBool(t.(bool))
+				cell.Write()
 			case reflect.Interface:
 				setCell(reflect.ValueOf(t))
 			}
@@ -111,38 +119,46 @@ func (r *Row) WriteStruct(e interface{}, cols int) int {
 		case time.Time:
 			cell := r.AddCell()
 			cell.SetValue(t)
+			cell.Write()
 		case fmt.Stringer: // check Stringer first
 			cell := r.AddCell()
 			cell.SetString(t.String())
+			cell.Write()
 		case sql.NullString: // check null sql types nulls = ''
 			cell := r.AddCell()
 			if cell.SetString(``); t.Valid {
 				cell.SetValue(t.String)
 			}
+			cell.Write()
 		case sql.NullBool:
 			cell := r.AddCell()
 			if cell.SetString(``); t.Valid {
 				cell.SetBool(t.Bool)
 			}
+			cell.Write()
 		case sql.NullInt64:
 			cell := r.AddCell()
 			if cell.SetString(``); t.Valid {
 				cell.SetValue(t.Int64)
 			}
+			cell.Write()
 		case sql.NullFloat64:
 			cell := r.AddCell()
 			if cell.SetString(``); t.Valid {
 				cell.SetValue(t.Float64)
 			}
+			cell.Write()
 		default:
 			switch f.Kind() {
 			case reflect.String, reflect.Int, reflect.Int8,
 				reflect.Int16, reflect.Int32, reflect.Int64, reflect.Float64, reflect.Float32:
 				cell := r.AddCell()
 				cell.SetValue(f.Interface())
+				cell.Write()
 			case reflect.Bool:
 				cell := r.AddCell()
 				cell.SetBool(t.(bool))
+				cell.Write()
 			default:
 				k-- // nothing set so reset to previous
 			}

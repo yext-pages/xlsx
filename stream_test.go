@@ -823,13 +823,18 @@ func readXLSXFile(t *testing.T, filePath string, fileBuffer io.ReaderAt, size in
 		for _, row := range sheet.Rows {
 			data := []string{}
 			cellTypes := []CellType{}
-			for _, cell := range row.Cells {
+			err := row.ForEachCell(func(cell *Cell) error {
+
 				str, err := cell.FormattedValue()
 				if err != nil {
-					t.Fatal(err)
+					return err
 				}
 				data = append(data, str)
 				cellTypes = append(cellTypes, cell.Type())
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
 			}
 			sheetData = append(sheetData, data)
 			sheetCellTypes = append(sheetCellTypes, cellTypes)

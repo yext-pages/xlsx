@@ -23,6 +23,31 @@ type Sheet struct {
 	AutoFilter      *AutoFilter
 	Relations       []Relation
 	DataValidations []*xlsxDataValidation
+	cellStore       CellStore
+}
+
+// NewSheet constructs a Sheet with the default CellStore and returns
+// a pointer to it.
+func NewSheet(name string) (*Sheet, error) {
+	return NewSheetWithCellStore(name, NewMemoryCellStore)
+}
+
+// NewSheetWithCellStore constructs a Sheet, backed by a CellStore,
+// for which you must provide the constructor function.
+func NewSheetWithCellStore(name string, constructor CellStoreConstructor) (*Sheet, error) {
+	sheet := &Sheet{
+		Name: name,
+	}
+	var err error
+	sheet.cellStore, err = constructor()
+	return sheet, err
+
+}
+
+// Remove Sheet's dependant resources - if you are done with operations on a sheet this should be called to clear down the Sheet's persistent cache.  Typically this happens *after* you've saved your changes.
+func (s *Sheet) Close() {
+	s.cellStore.Close()
+	s.cellStore = nil
 }
 
 type SheetView struct {
@@ -79,10 +104,13 @@ func (s *Sheet) addRelation(relType RelationshipType, target string, targetMode 
 
 // Add a new Row to a Sheet
 func (s *Sheet) AddRow() *Row {
-	row := &Row{Sheet: s}
+	// NOTE - this is not safe to use concurrently
+
+	rowCount := len(s.Rows)
+	row := &Row{Sheet: s, num: rowCount}
 	s.Rows = append(s.Rows, row)
 	if len(s.Rows) > s.MaxRow {
-		s.MaxRow = len(s.Rows)
+		s.MaxRow = rowCount
 	}
 	return row
 }
@@ -92,7 +120,28 @@ func (s *Sheet) AddRowAtIndex(index int) (*Row, error) {
 	if index < 0 || index > len(s.Rows) {
 		return nil, errors.New("AddRowAtIndex: index out of bounds")
 	}
-	row := &Row{Sheet: s}
+
+	for i := len(s.Rows) - 1; i >= index; i-- {
+		r := s.Rows[i]
+		cells := make(map[string]*Cell)
+		s.cellStore.ForEachInRow(r, func(c *Cell) error {
+			c.Row = r
+			cells[c.key()] = c
+			return nil
+		})
+		r.num++
+		for oldkey, cell := range cells {
+			err := s.cellStore.WriteCell(cell)
+			if err != nil {
+				return nil, err
+			}
+			err = s.cellStore.DeleteCell(oldkey)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	row := &Row{Sheet: s, num: index}
 	s.Rows = append(s.Rows, nil)
 
 	if index < len(s.Rows) {
@@ -125,7 +174,7 @@ func (s *Sheet) maybeAddRow(rowCount int) {
 		loopCnt := rowCount - s.MaxRow
 		for i := 0; i < loopCnt; i++ {
 
-			row := &Row{Sheet: s}
+			row := &Row{Sheet: s, num: i}
 			s.Rows = append(s.Rows, row)
 		}
 		s.MaxRow = rowCount
@@ -163,11 +212,8 @@ func (s *Sheet) Cell(row, col int) *Cell {
 	}
 
 	r := s.Rows[row]
-	for len(r.Cells) <= col {
-		r.AddCell()
-	}
-
-	return r.Cells[col]
+	cell := r.GetCell(col)
+	return cell
 }
 
 //Set the parameters of a column.  Parameters are passed as a pointer
@@ -256,12 +302,13 @@ func (s *Sheet) handleMerged() {
 	merged := make(map[string]*Cell)
 
 	for r, row := range s.Rows {
-		for c, cell := range row.Cells {
+		row.ForEachCell(func(cell *Cell) error {
 			if cell.HMerge > 0 || cell.VMerge > 0 {
-				coord := GetCellIDStringFromCoords(c, r)
+				coord := GetCellIDStringFromCoords(cell.num, r)
 				merged[coord] = cell
 			}
-		}
+			return nil
+		})
 	}
 
 	// This loop iterates over all cells that should be merged and applies the correct
@@ -374,9 +421,10 @@ func (s *Sheet) makeRows(worksheet *xlsxWorksheet, styles *xlsxStyleSheet, refTa
 		if row.OutlineLevel > maxLevelRow {
 			maxLevelRow = row.OutlineLevel
 		}
-		for c, cell := range row.Cells {
+		row.ForEachCell(func(cell *Cell) error {
 			var XfId int
 
+			c := cell.num
 			col := s.Col(c)
 			if col != nil {
 				XfId = col.outXfID
@@ -480,9 +528,11 @@ func (s *Sheet) makeRows(worksheet *xlsxWorksheet, styles *xlsxStyleSheet, refTa
 				worksheet.MergeCells.Cells = append(worksheet.MergeCells.Cells, mc)
 				worksheet.MergeCells.CellsMap[start] = mc
 			}
-		}
+			return nil
+		})
 		xSheet.Row = append(xSheet.Row, xRow)
 	}
+
 	// Update sheet format with the freshly determined max levels
 	s.SheetFormat.OutlineLevelCol = maxLevelCol
 	s.SheetFormat.OutlineLevelRow = maxLevelRow

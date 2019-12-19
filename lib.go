@@ -279,7 +279,6 @@ func makeRowFromSpan(spans string, sheet *Sheet) *Row {
 	var error error
 	var upper int
 	var row *Row
-	var cell *Cell
 
 	row = new(Row)
 	row.Sheet = sheet
@@ -288,12 +287,7 @@ func makeRowFromSpan(spans string, sheet *Sheet) *Row {
 		panic(error)
 	}
 	error = nil
-	row.Cells = make([]*Cell, upper)
-	for i := 0; i < upper; i++ {
-		cell = new(Cell)
-		cell.Value = ""
-		row.Cells[i] = cell
-	}
+	row.cellCount = upper
 	return row
 }
 
@@ -301,7 +295,6 @@ func makeRowFromSpan(spans string, sheet *Sheet) *Row {
 func makeRowFromRaw(rawrow xlsxRow, sheet *Sheet) *Row {
 	var upper int
 	var row *Row
-	var cell *Cell
 
 	row = new(Row)
 	row.Sheet = sheet
@@ -323,19 +316,13 @@ func makeRowFromRaw(rawrow xlsxRow, sheet *Sheet) *Row {
 	upper++
 
 	row.OutlineLevel = rawrow.OutlineLevel
+	row.cellCount = upper
 
-	row.Cells = make([]*Cell, upper)
-	for i := 0; i < upper; i++ {
-		cell = new(Cell)
-		cell.Value = ""
-		row.Cells[i] = cell
-	}
 	return row
 }
 
 func makeEmptyRow(sheet *Sheet) *Row {
 	row := new(Row)
-	row.Cells = make([]*Cell, 0)
 	row.Sheet = sheet
 	return row
 }
@@ -527,10 +514,10 @@ func readRowsFromSheet(Worksheet *xlsxWorksheet, file *File, sheet *Sheet, rowLi
 	var rows []*Row
 	var cols *ColStore
 	var row *Row
-	var minCol, maxCol, maxRow, colCount, rowCount int
+	var maxCol, maxRow, colCount, rowCount int
 	var reftable *RefTable
 	var err error
-	var insertRowIndex, insertColIndex int
+	var insertRowIndex int // , insertColIndex int
 	sharedFormulas := map[int]sharedFormula{}
 
 	if len(Worksheet.SheetData.Row) == 0 {
@@ -538,9 +525,9 @@ func readRowsFromSheet(Worksheet *xlsxWorksheet, file *File, sheet *Sheet, rowLi
 	}
 	reftable = file.referenceTable
 	if len(Worksheet.Dimension.Ref) > 0 && len(strings.Split(Worksheet.Dimension.Ref, cellRangeChar)) == 2 && rowLimit == NoRowLimit {
-		minCol, _, maxCol, maxRow, err = getMaxMinFromDimensionRef(Worksheet.Dimension.Ref)
+		_, _, maxCol, maxRow, err = getMaxMinFromDimensionRef(Worksheet.Dimension.Ref)
 	} else {
-		minCol, _, maxCol, maxRow, err = calculateMaxMinFromWorksheet(Worksheet)
+		_, _, maxCol, maxRow, err = calculateMaxMinFromWorksheet(Worksheet)
 	}
 	if err != nil {
 		panic(err.Error())
@@ -592,6 +579,7 @@ func readRowsFromSheet(Worksheet *xlsxWorksheet, file *File, sheet *Sheet, rowLi
 		} else {
 			row = makeRowFromRaw(rawrow, sheet)
 		}
+		row.num = insertRowIndex
 
 		row.Hidden = rawrow.Hidden
 		height, err := strconv.ParseFloat(rawrow.Ht, 64)
@@ -601,7 +589,6 @@ func readRowsFromSheet(Worksheet *xlsxWorksheet, file *File, sheet *Sheet, rowLi
 		row.isCustom = rawrow.CustomHeight
 		row.OutlineLevel = rawrow.OutlineLevel
 
-		insertColIndex = minCol
 		for _, rawcell := range rawrow.C {
 			h, v, err := Worksheet.MergeCells.getExtent(rawcell.R)
 			if err != nil {
@@ -609,36 +596,21 @@ func readRowsFromSheet(Worksheet *xlsxWorksheet, file *File, sheet *Sheet, rowLi
 			}
 			x, _, _ := GetCoordsFromCellIDString(rawcell.R)
 
-			// K1000000: Prevent panic when the range specified in the spreadsheet
-			//           view exceeds the actual number of columns in the dataset.
+			cellX := x
 
-			// Some spreadsheets will omit blank cells
-			// from the data.
-			for x > insertColIndex {
-				// Put an empty Cell into the array
-				if insertColIndex < len(row.Cells) {
-					row.Cells[insertColIndex] = new(Cell)
-				}
-				insertColIndex++
+			cell := newCell(row, cellX)
+			cell.HMerge = h
+			cell.VMerge = v
+			fillCellData(rawcell, reftable, sharedFormulas, cell)
+			if file.styles != nil {
+				cell.style = file.styles.getStyle(rawcell.S)
+				cell.NumFmt, cell.parsedNumFmt = file.styles.getNumberFormat(rawcell.S)
 			}
-			cellX := insertColIndex
-
-			if cellX < len(row.Cells) {
-				cell := row.Cells[cellX]
-				cell.HMerge = h
-				cell.VMerge = v
-				fillCellData(rawcell, reftable, sharedFormulas, cell)
-				if file.styles != nil {
-					cell.style = file.styles.getStyle(rawcell.S)
-					cell.NumFmt, cell.parsedNumFmt = file.styles.getNumberFormat(rawcell.S)
-				}
-				cell.date1904 = file.Date1904
-				// Cell is considered hidden if the row or the column of this cell is hidden
-				//
-				col := cols.FindColByIndex(cellX + 1)
-				cell.Hidden = rawrow.Hidden || (col != nil && col.Hidden)
-				insertColIndex++
-			}
+			cell.date1904 = file.Date1904
+			// Cell is considered hidden if the row or the column of this cell is hidden
+			col := cols.FindColByIndex(cellX + 1)
+			cell.Hidden = rawrow.Hidden || (col != nil && col.Hidden)
+			cell.Write()
 		}
 		if len(rows) > insertRowIndex {
 			rows[insertRowIndex] = row
@@ -707,7 +679,11 @@ func readSheetFromFile(sc chan *indexedSheet, index int, rsheet xlsxSheet, fi *F
 		sc <- result
 		return err
 	}
-	sheet := new(Sheet)
+
+	sheet, err := NewSheet(rsheet.Name)
+	if err != nil {
+		return err
+	}
 	sheet.File = fi
 	sheet.Rows, sheet.Cols, sheet.MaxCol, sheet.MaxRow = readRowsFromSheet(worksheet, fi, sheet, rowLimit)
 	sheet.Hidden = rsheet.State == sheetStateHidden || rsheet.State == sheetStateVeryHidden
@@ -758,8 +734,9 @@ func readSheetFromFile(sc chan *indexedSheet, index int, rsheet xlsxSheet, fi *F
 			if err != nil {
 				return err
 			}
-			cell := sheet.Row(y).Cells[x]
+			cell := sheet.Row(y).GetCell(x)
 			cell.Hyperlink = newHyperLink
+			cell.Write()
 		}
 	}
 
@@ -832,9 +809,8 @@ func readSheetsFromZipFile(f *zip.File, file *File, sheetXMLMap map[string]strin
 		if sheet.Error != nil {
 			return nil, nil, sheet.Error
 		}
-		sheetName := workbookSheets[sheet.Index].Name
+		sheetName := sheet.Sheet.Name
 		sheetsByName[sheetName] = sheet.Sheet
-		sheet.Sheet.Name = sheetName
 		sheets[sheet.Index] = sheet.Sheet
 	}
 	return sheetsByName, sheets, nil

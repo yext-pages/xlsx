@@ -156,6 +156,11 @@ func (f *File) Write(writer io.Writer) (err error) {
 // The maximum sheet name length is 31 characters. If the sheet name length is exceeded an error is thrown.
 // These special characters are also not allowed: : \ / ? * [ ]
 func (f *File) AddSheet(sheetName string) (*Sheet, error) {
+	return f.AddSheetWithCellStore(sheetName, NewMemoryCellStore)
+}
+
+func (f *File) AddSheetWithCellStore(sheetName string, constructor CellStoreConstructor) (*Sheet, error) {
+	var err error
 	if _, exists := f.Sheet[sheetName]; exists {
 		return nil, fmt.Errorf("duplicate sheet name '%s'.", sheetName)
 	}
@@ -175,6 +180,11 @@ func (f *File) AddSheet(sheetName string) (*Sheet, error) {
 		File:     f,
 		Selected: len(f.Sheets) == 0,
 		Cols:     &ColStore{},
+	}
+
+	sheet.cellStore, err = constructor()
+	if err != nil {
+		return nil, err
 	}
 	f.Sheet[sheetName] = sheet
 	f.Sheets = append(f.Sheets, sheet)
@@ -381,7 +391,7 @@ func (f *File) ToSlice() (output [][][]string, err error) {
 				continue
 			}
 			r := []string{}
-			for _, cell := range row.Cells {
+			err := row.ForEachCell(func(cell *Cell) error {
 				str, err := cell.FormattedValue()
 				if err != nil {
 					// Recover from strconv.NumError if the value is an empty string,
@@ -389,11 +399,16 @@ func (f *File) ToSlice() (output [][][]string, err error) {
 					if numErr, ok := err.(*strconv.NumError); ok && numErr.Num == "" {
 						str = ""
 					} else {
-						return output, err
+						return err
 					}
 				}
 				r = append(r, str)
+				return nil
+			})
+			if err != nil {
+				return output, err
 			}
+
 			s = append(s, r)
 		}
 		output = append(output, s)
@@ -418,7 +433,8 @@ func (f *File) ToSliceUnmerged() (output [][][]string, err error) {
 
 	for s, sheet := range f.Sheets {
 		for r, row := range sheet.Rows {
-			for c, cell := range row.Cells {
+			row.ForEachCell(func(cell *Cell) error {
+				c := cell.num
 				if cell.HMerge > 0 {
 					for i := c + 1; i <= c+cell.HMerge; i++ {
 						output[s][r][i] = output[s][r][c]
@@ -430,7 +446,8 @@ func (f *File) ToSliceUnmerged() (output [][][]string, err error) {
 						output[s][i][c] = output[s][r][c]
 					}
 				}
-			}
+				return nil
+			})
 		}
 	}
 

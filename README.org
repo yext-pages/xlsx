@@ -91,6 +91,7 @@ func main() {
     row = sheet.AddRow()
     cell = row.AddCell()
     cell.Value = "I am a cell!"
+    cell.Write()
     err = file.Save("MyXLSXFile.xlsx")
     if err != nil {
         fmt.Printf(err.Error())

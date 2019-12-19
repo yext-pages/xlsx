@@ -415,13 +415,17 @@ func readXLSXFileS(t *testing.T, filePath string, fileBuffer io.ReaderAt, size i
 		for j, row := range sheet.Rows {
 			actualWorkBookCells[i] = append(actualWorkBookCells[i], []Cell{})
 			var data []string
-			for _, cell := range row.Cells {
+			err := row.ForEachCell(func(cell *Cell) error {
 				actualWorkBookCells[i][j] = append(actualWorkBookCells[i][j], *cell)
 				str, err := cell.FormattedValue()
 				if err != nil {
-					t.Fatal(err)
+					return err
 				}
 				data = append(data, str)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
 			}
 			sheetData = append(sheetData, data)
 		}

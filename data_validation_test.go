@@ -27,6 +27,7 @@ func TestDataValidation(t *testing.T) {
 	row = sheet.AddRow()
 	cell = row.AddCell()
 	cell.Value = "a1"
+	cell.Write()
 
 	dd := NewDataValidation(0, 0, 0, 0, true)
 	err = dd.SetDropList([]string{"a1", "a2", "a3"})
